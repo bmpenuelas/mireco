@@ -218,6 +218,9 @@ const deviceSetup = createDeviceSetup({
   error: $("setupIPError"),
   okButton: $("setupOK"),
   laterButton: $("setupLater"),
+  testButton: $("setupTest"),
+  result: $("setupTestResult"),
+  testConnection,
   initialValue: settings.get("deviceIP") || IP_PREFIX,
   background: [".topbar", ".remote-area", "footer", "#keyboardPanel"].map((selector) => document.querySelector(selector)),
   onSubmit: (parsed) => {

@@ -18,6 +18,9 @@ export const IP_PREFIX = "192.168.1.";
  * @param {HTMLButtonElement} deps.okButton
  * @param {HTMLButtonElement} deps.laterButton
  * @param {(parsed: {host: string, addressSpace: "local"|"loopback"}) => void} deps.onSubmit
+ * @param {HTMLButtonElement} [deps.testButton] "Test" button, like the one in Settings
+ * @param {HTMLElement} [deps.result] line showing the test outcome
+ * @param {(parsed: object) => Promise<{tone: string, message: string}>} [deps.testConnection]
  * @param {string} [deps.initialValue]
  * @param {(HTMLElement|null)[]} [deps.background] made inert while the dialog is open
  */
@@ -28,15 +31,32 @@ export function createDeviceSetup({
   okButton,
   laterButton,
   onSubmit,
+  testButton,
+  result,
+  testConnection,
   initialValue = IP_PREFIX,
   background = [],
 }) {
   let open = false;
+  let testing = false;
+  // Bumped whenever the field changes, so a slow test can't report for an old address.
+  let testRun = 0;
 
   function setError(message) {
     error.textContent = message ?? "";
     error.hidden = !message;
     input.setAttribute("aria-invalid", message ? "true" : "false");
+  }
+
+  function setResult(tone, message) {
+    if (!result) return;
+    result.dataset.tone = tone || "";
+    result.textContent = message ?? "";
+  }
+
+  function clearResult() {
+    testRun++;
+    setResult("", "");
   }
 
   /** Enables OK as soon as the value is usable; clears an old error once it is. */
@@ -52,6 +72,7 @@ export function createDeviceSetup({
     open = true;
     input.value = initialValue;
     setError(null);
+    clearResult();
     validate();
     dialog.hidden = false;
     background.forEach((el) => el && (el.inert = true));
@@ -65,6 +86,33 @@ export function createDeviceSetup({
     dialog.hidden = true;
     background.forEach((el) => el && (el.inert = false));
     setError(null);
+    clearResult();
+  }
+
+  /** Asks the transport whether the address answers, like Settings → Test does. */
+  async function runTest() {
+    if (!testConnection || testing) return;
+    const parsed = parseDeviceAddress(input.value);
+    if (!parsed.ok) {
+      okButton.disabled = true;
+      setError(parsed.error);
+      input.focus({ preventScroll: true });
+      return;
+    }
+    setError(null);
+    const run = ++testRun;
+    testing = true;
+    if (testButton) testButton.disabled = true;
+    setResult("busy", `Contacting ${parsed.host}:6095…`);
+    try {
+      const { tone, message } = await testConnection(parsed);
+      if (run === testRun && open) setResult(tone, message);
+    } catch (err) {
+      if (run === testRun && open) setResult("error", err?.message || String(err));
+    } finally {
+      testing = false;
+      if (testButton) testButton.disabled = false;
+    }
   }
 
   function submit() {
@@ -79,7 +127,10 @@ export function createDeviceSetup({
     onSubmit(parsed);
   }
 
-  input.addEventListener("input", validate);
+  input.addEventListener("input", () => {
+    validate();
+    clearResult();
+  });
   input.addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
     e.preventDefault();
@@ -87,6 +138,7 @@ export function createDeviceSetup({
   });
   okButton.addEventListener("click", submit);
   laterButton.addEventListener("click", close);
+  testButton?.addEventListener("click", runTest);
   dialog.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     e.preventDefault();
@@ -97,6 +149,7 @@ export function createDeviceSetup({
     open: show,
     close,
     submit,
+    runTest,
     validate,
     get isOpen() {
       return open;

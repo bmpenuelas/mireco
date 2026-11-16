@@ -55,7 +55,7 @@ test("inherited custom domain is removed and Jekyll is disabled", () => {
 });
 
 test("CSP only allows connections to the device API port", () => {
-  const csp = /Content-Security-Policy" content="([^"]+)"/.exec(read("index.html"))[1];
+  const csp = /Content-Security-Policy"\s+content="([^"]+)"/.exec(read("index.html"))[1];
   assert.match(csp, /connect-src http:\/\/\*:6095;/);
   assert.match(csp, /script-src 'self';/);
 });

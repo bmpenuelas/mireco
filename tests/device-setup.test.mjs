@@ -6,13 +6,15 @@ import assert from "node:assert/strict";
 import { createDeviceSetup, IP_PREFIX } from "../js/device-setup.js";
 import { FakeDocument, FakeElement, FakeField } from "./helpers/fakes.mjs";
 
-function setup({ initialValue } = {}) {
+function setup({ initialValue, testConnection } = {}) {
   const doc = new FakeDocument();
   const dialog = doc.add(new FakeElement(doc, "deviceSetup", "div"));
   const input = doc.add(new FakeField(doc, "setupIP"));
   const error = doc.add(new FakeElement(doc, "setupIPError", "p"));
+  const result = doc.add(new FakeElement(doc, "setupTestResult", "p"));
   const okButton = doc.add(new FakeElement(doc, "setupOK", "button"));
   const laterButton = doc.add(new FakeElement(doc, "setupLater", "button"));
+  const testButton = doc.add(new FakeElement(doc, "setupTest", "button"));
   const background = [doc.add(new FakeElement(doc, "topbar", "header"))];
   dialog.hidden = true;
   error.hidden = true;
@@ -23,6 +25,9 @@ function setup({ initialValue } = {}) {
     error,
     okButton,
     laterButton,
+    testButton,
+    result,
+    testConnection,
     background,
     initialValue,
     onSubmit: (parsed) => submitted.push(parsed),
@@ -37,7 +42,7 @@ function setup({ initialValue } = {}) {
     target.dispatchEvent(event);
     return event;
   };
-  return { control, dialog, input, error, okButton, laterButton, background, submitted, type, key };
+  return { control, dialog, input, error, result, okButton, laterButton, testButton, background, submitted, type, key };
 }
 
 test("opening prefills 192.168.1. and keeps OK disabled until the address is complete", () => {
@@ -130,4 +135,64 @@ test("an existing stored value is prefilled instead of the default prefix", () =
   type("10.0.0.8");
   control.submit();
   assert.equal(submitted[0].host, "10.0.0.8");
+});
+
+test("Test asks whether the typed address answers and shows the result", async () => {
+  const calls = [];
+  const { control, testButton, result, type } = setup({
+    testConnection: async (parsed) => {
+      calls.push(parsed);
+      return { tone: "ok", message: `Something answered at ${parsed.host}:6095` };
+    },
+  });
+  control.open();
+  type("192.168.1.20");
+  await control.runTest();
+  assert.deepEqual(calls, [{ ok: true, host: "192.168.1.20", addressSpace: "local" }]);
+  assert.equal(result.dataset.tone, "ok");
+  assert.match(result.textContent, /answered at 192\.168\.1\.20:6095/);
+  assert.equal(testButton.disabled, false, "the button is usable again after the test");
+});
+
+test("Test refuses an invalid address without contacting anything", async () => {
+  let called = false;
+  const { control, error, result, type } = setup({
+    testConnection: async () => {
+      called = true;
+      return { tone: "ok", message: "unexpected" };
+    },
+  });
+  control.open();
+  type("192.168.1.");
+  await control.runTest();
+  assert.equal(called, false);
+  assert.equal(error.hidden, false);
+  assert.equal(result.textContent, "");
+});
+
+test("editing the address clears an old test result", async () => {
+  const { control, result, type } = setup({
+    testConnection: async () => ({ tone: "error", message: "No response" }),
+  });
+  control.open();
+  type("192.168.1.20");
+  await control.runTest();
+  assert.equal(result.dataset.tone, "error");
+  type("192.168.1.21");
+  assert.equal(result.textContent, "");
+  assert.equal(result.dataset.tone, "");
+});
+
+test("a slow test doesn't report after the dialog is closed", async () => {
+  let finish;
+  const { control, result, type } = setup({
+    testConnection: () => new Promise((resolve) => (finish = resolve)),
+  });
+  control.open();
+  type("192.168.1.20");
+  const pending = control.runTest();
+  control.close();
+  finish({ tone: "ok", message: "late answer" });
+  await pending;
+  assert.equal(result.textContent, "");
 });
